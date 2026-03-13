@@ -1,0 +1,28 @@
+[package]
+name = "egg_cp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = {version = "4.5.60", features = ["derive"]}
+slog = "2.7"
+slog-term = "2.9"
+slog-async = "2.8"
+egg = { path="./egg" }
+hotpath = "0.14.0"
+rustc-hash = "2.1.1"
+
+ordered-float = "1"
+env_logger = "0.8.2"
+colored = "2"
+csv = "1.1"
+serde = { version = "1.0", features = ["derive"] }
+num-traits = "0.2.14"
+rand = "0.8.0"
+json = "*"
+indicatif = "0.18.4"
+chrono = "0.4.19"
+
+[features]
+hotpath = ["hotpath/hotpath"]
+hotpath-alloc = ["hotpath/hotpath-alloc"]
