@@ -1,4 +1,4 @@
-use std::ffi::OsString;
+use std::{ffi::OsString, fs};
 use std::io::Write;
 use std::path::Path;
 
@@ -27,9 +27,12 @@ pub struct Args {
     egraph_iterations: usize,
 
     #[arg(long, default_value_t = 5000, help = "Max number of nodes in the egraph")]
-    nodes: usize,
+    node_limit: usize,
 
-    #[arg(long, default_value_t = 1000, help = "EGraph time limit over all iterations in seconds")]
+    #[arg(long, default_value_t = 10000, help = "Max number of nodes in the egraph for the last iteration")]
+    last_node_limit: usize,
+
+    #[arg(long, default_value_t = 10, help = "EGraph time limit over all iterations in seconds")]
     total_time: u64,
 
     #[arg(long, default_value_t = 5, help = "Number of restart iterations to run")]
@@ -46,13 +49,16 @@ pub struct Args {
 
     #[arg(long, default_value = "data/prefix/evaluation.csv", help = "Path to the expression file to read from")]
     expression_file: String,
+
+    #[arg(long, default_value = "logs", help = "Path to the logs directory")]
+    logs_dir: String,
 }
 
-#[hotpath::main]
+// #[hotpath::main]
 fn main() {
     let args = Args::parse();
 
-    let log_dir = Path::new("logs");
+    let log_dir = Path::new(&args.logs_dir);
     if !log_dir.exists() {
         std::fs::create_dir(log_dir).expect("Failed to create logs directory");
     }
@@ -74,20 +80,26 @@ fn main() {
             // {per_sec}      : Processing speed
             // {eta_precise}  : Countdown timer (HH:MM:SS)
             // {end_time}     : OUR CUSTOM KEY for the absolute clock time
-            "{spinner:.green} [{elapsed_precise}] {wide_bar:.cyan/blue} {pos}/{len} ({percent}%) | Speed: {per_sec} | ETA: {eta_precise} | Finishes at: {end_time} {msg}"
+            "{spinner:.green} [{elapsed_precise}] {wide_bar:.cyan/blue} {pos}/{len} ({percent}%) | Speed: {per_sec} | ETA: {eta_precise} | Finishes at: {end_time}, {msg}"
         )
         .unwrap()
         // Define our custom {end_time} variable
         .with_key("end_time", |state: &indicatif::ProgressState, w: &mut dyn std::fmt::Write| {
             let eta = state.eta();
-            // If ETA is 0, we either just started or we are done
+            // 1. Basic check: is there an ETA?
             if eta.as_secs() > 0 {
-                // Add the ETA duration to the current local clock time
-                let expected_end = Local::now() + eta;
-                write!(w, "{}", expected_end.format("%H:%M:%S")).unwrap();
-            } else {
-                write!(w, "TBD").unwrap();
+                // 2. Safely convert Duration to TimeDelta (chrono's duration type)
+                // This handles the "OutOfRangeError" by returning None if too big
+                if let Ok(delta) = chrono::TimeDelta::from_std(eta) {
+                    // 3. Use checked_add_signed to prevent addition overflow
+                    if let Some(expected_end) = Local::now().checked_add_signed(delta) {
+                        write!(w, "{}", expected_end.format("%H:%M:%S")).unwrap();
+                        return;
+                    }
+                }
             }
+            // Fallback if ETA is too large, 0, or calculation fails
+            write!(w, "TBD").unwrap();
         })
         // Use sleek solid blocks instead of hashes
         .progress_chars("██░") 
@@ -98,6 +110,11 @@ fn main() {
     //             .unwrap()
     //             .progress_chars("##-"),
     //     );
+    let report_path = format!("{}/{}_hotpath_report.txt", log_dir.display(), args.suffix);
+    let channels_guard = hotpath::HotpathGuardBuilder::new("main")
+        .format(hotpath::Format::Table)
+        .output_path(&report_path)
+        .build();
     let mut loggers = init_loggers(log_dir, &args.suffix, progress_bar.clone());
 
     info!(loggers.logger, "Starting Caviar CP with configuration: {:?}", args);
@@ -111,6 +128,7 @@ fn main() {
         // rulset_class = -1
         // use_iteration_check = true
         // report = false
+        progress_bar.set_message(format!("solving {}", expression.index));
 
         let mut result = simplify_expression(
             &expression,
@@ -142,7 +160,6 @@ fn main() {
         }
 
         progress_bar.inc(1);
-        // progress_bar.set_message(format!("solved {}/{}", solved, progress_bar.position()));
     }
 
     let elapsed = init_time.elapsed();
@@ -156,5 +173,14 @@ fn main() {
     info!(loggers.logger, "Finished proving expressions. Solved {}/{}", solved, expression_vect.len());
     // write_results(&format!("tmp/results_beh_{}.csv", threshold), &results).unwrap();
 
+    info!(loggers.logger, "Wrote log to {} files in {}", args.suffix, log_dir.display());
+
+    drop(channels_guard);
+
+    if let Ok(report_content) = fs::read_to_string(&report_path) {
+        println!("{}", report_content);
+    } else {
+        eprintln!("Failed to read hotpath report from {}", report_path);
+    }
 
 }

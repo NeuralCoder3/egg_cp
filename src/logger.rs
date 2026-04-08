@@ -54,7 +54,6 @@ fn create_stdout_drain(level: Level) -> impl Drain<Ok = (), Err = slog::Never> {
     LevelFilter::new(async_drain, level).fuse()
 }
 
-
 pub struct Loggers {
     pub logger: slog::Logger,
     pub results: BufWriter<File>,

@@ -1015,10 +1015,10 @@ pub fn simplify_expression(expression: &ExpressionStruct, loggers: &Loggers, par
 
     let rules = crate::rules::rules();
     let mut cp_rules = Vec::<Rewrite>::new();
-    let mut critical_pairs_set = HashSet::<(String,String)>::new();
+    // let mut critical_pairs_set = HashSet::<(&str,&str)>::new();
     // let mut critical_pairs_set = HashSet::<(Rewrite,Rewrite)>::new();
     // let mut critical_pairs = HashSet::<(String,(Id,String, Vec<String>, ),(Id,String, Vec<String>))>::new();
-    let mut critical_pairs = HashSet::<(String,CpKey,CpKey)>::new();
+    let mut critical_pairs = HashSet::<(usize,CpKey,CpKey)>::new();
         // (Id,String, Vec<String>, Option<Arc<dyn Condition<Math, ConstantFold>>>)
         // (Id,String, Vec<String>, Option<Arc<dyn Condition<Math, ConstantFold>>>))>::new();
     let mut rule_name_counter = 0;
@@ -1056,17 +1056,25 @@ pub fn simplify_expression(expression: &ExpressionStruct, loggers: &Loggers, par
         info!(loggers.logger, "  Iteration {}", i);
         let runner_builder = Runner::default()
             .with_iter_limit(params.egraph_iterations)
-            .with_node_limit(params.nodes)
+            // .with_node_limit(params.nodes)
+            .with_node_limit(if i == params.iterations { params.last_node_limit } else { params.node_limit })
             .with_time_limit(Duration::from_secs_f64(threshold))
             .with_expr(&expr);
 
         cp_rules
             .sort_by_key(|cr| {
                 let r = &cr.rewrite;
-                // let lhs_size = term_size(&r.lhs);
+
+                // let rhs_size = term_size(&r.rhs);
+                // rhs_size
+
+                let lhs_size = term_size(&r.lhs);
                 let rhs_size = term_size(&r.rhs);
-                // lhs_size + rhs_size
-                rhs_size
+                rhs_size - lhs_size
+
+                // let lhs_size = term_size(&r.lhs);
+                // let rhs_size = term_size(&r.rhs);
+                // 4*lhs_size+rhs_size
             });
 
         cp_rules = cp_rules.into_iter()
@@ -1342,55 +1350,78 @@ measure_block!("rule parents", {
         // io::stdout().flush().unwrap();
         info!(loggers.logger, "    Find CP candidates");
 
-            // only propagate up to either other node => intersection only at one of the rules
-            // at class c, get all pairs and take these that have one component be c
-            // find overlaps
+// 1. State initialized outside the measurement block
+let mut rule_id_map: HashMap<String, usize> = HashMap::new();
+let mut critical_pairs_set: HashSet<(usize, usize)> = HashSet::new();
+
 measure_block!("find cp candidate", {
-    // sub applicate: e class -> list of all rules applicable together with origin
-    // for (eclass, apps) in sub_applicable.iter() {
+    // These maps ensure we only keep one application per rule ID
+    let mut unique_local: HashMap<usize, &CpKey> = HashMap::new();
+    let mut unique_inherited: HashMap<usize, &CpKey> = HashMap::new();
+    
+    // We store tuples of (rule_id, &CpKey) to pass into the N^2 loops
+    let mut local_apps: Vec<(usize, &CpKey)> = Vec::new();
+    let mut inherited_apps: Vec<(usize, &CpKey)> = Vec::new();
+
     for (eclass, apps) in sub_applicable.iter().enumerate() {
-        let mut local_apps = Vec::new();
-        let mut inherited_apps = Vec::new();
-        
+        // Clear buffers to reuse memory allocations
+        unique_local.clear();
+        unique_inherited.clear();
+        local_apps.clear();
+        inherited_apps.clear();
+
+        // --- STEP 1: O(N) ID Assignment & Deduplication ---
         for app in apps {
-            if usize::from(app.0) == eclass { // app.0 is the `src` Id
-                local_apps.push(app);
+            let rule_name = app.1.rewrite.name(); // app.1 is the rule
+            
+            // Get or create the lightweight usize ID (allocates String ONLY on first sight)
+            let rule_id = if let Some(&id) = rule_id_map.get(rule_name) {
+                id
             } else {
-                inherited_apps.push(app);
+                let new_id = rule_id_map.len();
+                rule_id_map.insert(rule_name.to_string(), new_id);
+                new_id
+            };
+
+            // Keep only the first application we see for each rule ID
+            if usize::from(app.0) == eclass {
+                unique_local.entry(rule_id).or_insert(app);
+            } else {
+                unique_inherited.entry(rule_id).or_insert(app);
             }
         }
 
-        let mut process_pair = |app_i: &CpKey, app_j: &CpKey| {
-            let CpKey(src_i, rule_i) = app_i;
-            let CpKey(src_j, rule_j) = app_j;
+        // --- STEP 2: Flatten the unique maps into slices ---
+        local_apps.extend(unique_local.drain());
+        inherited_apps.extend(unique_inherited.drain());
+
+        // --- STEP 3: The highly optimized N^2 Loops ---
+        // Notice we take the pre-calculated `id` directly!
+        let mut process_pair = |(id_i, app_i): &(usize, &CpKey), (id_j, app_j): &(usize, &CpKey)| {
             
-            let name_i = rule_i.rewrite.name();
-            let name_j = rule_j.rewrite.name();
-            
-            let pair = if name_i < name_j {
-                // (name_i, name_j) 
-                (name_i.to_string(), name_j.to_string())
+            // Fast integer comparison instead of string comparison
+            let pair = if id_i < id_j {
+                (*id_i, *id_j)
             } else {
-                // (name_j, name_i)
-                (name_j.to_string(), name_i.to_string())
+                (*id_j, *id_i)
             };
             
             if critical_pairs_set.insert(pair) {
                 let cp_count = critical_pairs_set.len();
-                // TODO: usize not string for name
-                // TODO: use Rc for key to avoid clone
+                let CpKey(src_i, rule_i) = app_i;
+                let CpKey(src_j, rule_j) = app_j;
+
                 critical_pairs.insert((
-                    // cp_count, 
-                    cp_count.to_string(),
-                    CpKey(*src_i, rule_i.clone()), 
-                    CpKey(*src_j, rule_j.clone())
+                    cp_count, // Change this to usize in your struct if possible!
+                    CpKey(*src_i, Rc::clone(rule_i)), 
+                    CpKey(*src_j, Rc::clone(rule_j))
                 ));
             }
         };
 
         for i in 0..local_apps.len() {
             for j in (i + 1)..local_apps.len() {
-                process_pair(local_apps[i], local_apps[j]);
+                process_pair(&local_apps[i], &local_apps[j]);
             }
         }
 
@@ -1401,6 +1432,68 @@ measure_block!("find cp candidate", {
         }
     }
 });
+
+            // only propagate up to either other node => intersection only at one of the rules
+            // at class c, get all pairs and take these that have one component be c
+            // find overlaps
+// measure_block!("find cp candidate", {
+//     // sub applicate: e class -> list of all rules applicable together with origin
+//     // for (eclass, apps) in sub_applicable.iter() {
+//     let mut local_apps = Vec::new();
+//     let mut inherited_apps = Vec::new();
+//     for (eclass, apps) in sub_applicable.iter().enumerate() {
+//         local_apps.clear();
+//         inherited_apps.clear();
+        
+//         for app in apps {
+//             if usize::from(app.0) == eclass { // app.0 is the `src` Id
+//                 local_apps.push(app);
+//             } else {
+//                 inherited_apps.push(app);
+//             }
+//         }
+
+//         let mut process_pair = |app_i: &CpKey, app_j: &CpKey| {
+//             let CpKey(src_i, rule_i) = app_i;
+//             let CpKey(src_j, rule_j) = app_j;
+            
+//             let name_i = rule_i.rewrite.name();
+//             let name_j = rule_j.rewrite.name();
+            
+//             let pair = if name_i < name_j {
+//                 // (name_i, name_j) 
+//                 (name_i,name_j)
+//             } else {
+//                 // (name_j, name_i)
+//                 (name_j, name_i)
+//             };
+            
+//             if critical_pairs_set.insert(pair) {
+//                 let cp_count = critical_pairs_set.len();
+//                 // TODO: usize not string for name
+//                 // TODO: use Rc for key to avoid clone
+//                 critical_pairs.insert((
+//                     // cp_count, 
+//                     cp_count,
+//                     CpKey(*src_i, Rc::clone(rule_i)),
+//                     CpKey(*src_j, Rc::clone(rule_j))
+//                 ));
+//             }
+//         };
+
+//         for i in 0..local_apps.len() {
+//             for j in (i + 1)..local_apps.len() {
+//                 process_pair(local_apps[i], local_apps[j]);
+//             }
+//         }
+
+//         for local in &local_apps {
+//             for inherited in &inherited_apps {
+//                 process_pair(local, inherited);
+//             }
+//         }
+//     }
+// });
 
         // measure_block!("find cp candidate", {
         //     for (eclass, apps) in sub_applicable.iter() {
