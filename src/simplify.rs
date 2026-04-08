@@ -1,13 +1,11 @@
-use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io::{self, BufWriter, Write};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::rc::Rc;
 use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 use egg::rewrite::{SubstitutionSet, Term, all_critical_pair_ref, parse_term, subst, term_size, vars};
-use egg::{Analysis, AstDepth, Condition, ConditionalApplier, Extractor, Id, Language, Pattern, RecExpr, Runner, Searcher, StopReason, Subst, Symbol, Var, define_language};
+use egg::{Analysis, AstDepth, Condition, ConditionalApplier, Extractor, Id, Language, Pattern, RecExpr, Runner, Searcher, StopReason, Subst, Var};
 use hotpath::measure_block;
 use colored::*;
 use rustc_hash::FxHashSet;
@@ -15,165 +13,19 @@ use slog::info;
 
 use crate::{Args, logger::Loggers, structs::{ExpressionStruct, ResultStructure}};
 
-
 // Defining aliases to reduce code.
-pub type EGraph = egg::EGraph<Math, ConstantFold>;
+// pub type MEGraph = egg::EGraph<Math, ConstantFold>;
 // pub type Rewrite = egg::Rewrite<Math, ConstantFold>;
-pub type Rewrite = ConditionRewrite<Math, ConstantFold>;
+// pub type MRewrite = ConditionRewrite<Math, ConstantFold>;
 
-//Definition of the language used.
-define_language! {
-    pub enum Math {
-        "+" = Add([Id; 2]),
-        "-" = Sub([Id; 2]),
-        "*" = Mul([Id; 2]),
-        "/" = Div([Id; 2]),
-        "%" = Mod([Id; 2]),
-        "max" = Max([Id; 2]),
-        "min" = Min([Id; 2]),
-        "<" = Lt([Id; 2]),
-        ">" = Gt([Id; 2]),
-        "!" = Not(Id),
-        "<=" = Let([Id;2]),
-        ">=" = Get([Id;2]),
-        "==" = Eq([Id; 2]),
-        "!=" = IEq([Id; 2]),
-        "||" = Or([Id; 2]),
-        "&&" = And([Id; 2]),
-        Constant(i64),
-        Symbol(Symbol),
-    }
-}
-/// Enabling Constant Folding through the Analysis of egg.
-#[derive(Default, Clone)]
-pub struct ConstantFold;
 
-impl Analysis<Math> for ConstantFold {
-    type Data = Option<i64>;
-
-    fn merge(&self, a: &mut Self::Data, b: Self::Data) -> Option<Ordering> {
-        match (a.as_mut(), &b) {
-            (None, None) => Some(Ordering::Equal),
-            (None, Some(_)) => {
-                *a = b;
-                Some(Ordering::Less)
-            }
-            (Some(_), None) => Some(Ordering::Greater),
-            (Some(_), Some(_)) => Some(Ordering::Equal),
-        }
-        // if a.is_none() && b.is_some() {
-        //     *a = b
-        // }
-        // cmp
-    }
-
-    fn make(egraph: &EGraph, enode: &Math) -> Self::Data {
-        let x = |i: &Id| egraph[*i].data.as_ref();
-        Some(match enode {
-            Math::Constant(c) => *c,
-            Math::Add([a, b]) => x(a)? + x(b)?,
-            Math::Sub([a, b]) => x(a)? - x(b)?,
-            Math::Mul([a, b]) => x(a)? * x(b)?,
-            Math::Div([a, b]) if *x(b)? != 0 => x(a)? / x(b)?,
-            Math::Max([a, b]) => std::cmp::max(*x(a)?, *x(b)?),
-            Math::Min([a, b]) => std::cmp::min(*x(a)?, *x(b)?),
-            Math::Not(a) => {
-                if *x(a)? == 0 {
-                    1
-                } else {
-                    0
-                }
-            }
-            Math::Lt([a, b]) => {
-                if x(a)? < x(b)? {
-                    1
-                } else {
-                    0
-                }
-            }
-            Math::Gt([a, b]) => {
-                if x(a)? > x(b)? {
-                    1
-                } else {
-                    0
-                }
-            }
-            Math::Let([a, b]) => {
-                if x(a)? <= x(b)? {
-                    1
-                } else {
-                    0
-                }
-            }
-            Math::Get([a, b]) => {
-                if x(a)? >= x(b)? {
-                    1
-                } else {
-                    0
-                }
-            }
-            Math::Mod([a, b]) => {
-                if *x(b)? == 0 {
-                    0
-                } else {
-                    x(a)? % x(b)?
-                }
-            }
-            Math::Eq([a, b]) => {
-                if x(a)? == x(b)? {
-                    1
-                } else {
-                    0
-                }
-            }
-            Math::IEq([a, b]) => {
-                if x(a)? != x(b)? {
-                    1
-                } else {
-                    0
-                }
-            }
-            Math::And([a, b]) => {
-                if *x(a)? == 0 || *x(b)? == 0 {
-                    0
-                } else {
-                    1
-                }
-            }
-            Math::Or([a, b]) => {
-                if *x(a)? == 1 || *x(b)? == 1 {
-                    1
-                } else {
-                    0
-                }
-            }
-
-            _ => return None,
-        })
-    }
-
-    fn modify(egraph: &mut EGraph, id: Id) {
-        let class = &mut egraph[id];
-        if let Some(c) = class.data.clone() {
-            let added = egraph.add(Math::Constant(c.clone()));
-            let (id, _did_something) = egraph.union(id, added);
-            // to not prune, comment this out
-            egraph[id].nodes.retain(|n| n.is_leaf());
-
-            assert!(
-                !egraph[id].nodes.is_empty(),
-                "empty eclass! {:#?}",
-                egraph[id]
-            );
-            #[cfg(debug_assertions)]
-            egraph[id].assert_unique_leaves();
-        }
-    }
-}
-
-pub fn all_conditions_extended(
-    conds: Vec<Arc<dyn ExtendedCondition<Math,ConstantFold>>>
-) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
+pub fn all_conditions_extended<L,N>(
+    conds: Vec<Arc<dyn ExtendedCondition<L,N>>>
+) -> impl Fn(&mut egg::EGraph<L,N>, Id, &Subst) -> bool 
+where
+    L: egg::Language,
+    N: egg::Analysis<L>,
+{
     move |egraph, id, subst| {
         for cond in conds.iter() {
             if !cond.as_condition().check(egraph, id, subst) {
@@ -185,142 +37,7 @@ pub fn all_conditions_extended(
 }
 
 
-// pub fn all_conditions(
-//     conds: Vec<impl Fn(&mut EGraph, Id, &Subst) -> bool>
-// ) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
-//     move |egraph, id, subst| {
-//         for cond in conds.iter() {
-//             if !cond(egraph, id, subst) {
-//                 return false;
-//             }
-//         }
-//         true
-//     }
-// }
 
-pub fn is_const_pos(var: &str) -> impl ExtendedCondition<Math,ConstantFold> {
-    IsConstPosCondition::new(var)
-}
-
-pub fn is_const_neg(var: &str) -> impl ExtendedCondition<Math,ConstantFold> {
-    IsConstNegCondition::new(var)
-}
-
-/// Checks if a constant is positive
-pub fn is_const_pos_fun(var: Var) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
-    // Get the constant
-    // let var = var.parse().unwrap();
-
-    // Get the substitutions where the constant appears
-    move |egraph, _, subst| {
-        // Check if any of the representations of ths constant (nodes inside its eclass) is positive
-        egraph[subst[var]].nodes.iter().any(|n| match n {
-            Math::Constant(c) => c > &0,
-            _ => return false,
-        })
-    }
-}
-
-/// Checks if a constant is negative
-pub fn is_const_neg_fun(var: Var) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
-    // let var = var.parse().unwrap();
-
-    // Get the substitutions where the constant appears
-    move |egraph, _, subst| {
-        //Check if any of the representations of ths constant (nodes inside its eclass) is negative
-        egraph[subst[var]].nodes.iter().any(|n| match n {
-            Math::Constant(c) => c < &0,
-            _ => return false,
-        })
-    }
-}
-
-/// Checks if a constant is equals zero
-pub fn is_not_zero(var: &str) -> impl ExtendedCondition<Math,ConstantFold> {
-    IsNotZeroCondition::new(var)
-}
-// pub fn is_not_zero(var: &str) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
-//     let var = var.parse().unwrap();
-//     let zero = Math::Constant(0);
-//     // Check if any of the representations of the constant (nodes inside its eclass) is zero
-//     move |egraph, _, subst| !egraph[subst[var]].nodes.contains(&zero)
-// }
-
-
-pub fn is_not_zero_fun(var: Var) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
-    let zero = Math::Constant(0);
-    // Check if any of the representations of the constant (nodes inside its eclass) is zero
-    move |egraph, _, subst| !egraph[subst[var]].nodes.contains(&zero)
-}
-
-pub fn compare_c0_c1(
-    // first constant
-    var: &str,
-    // 2nd constant
-    var1: &str,
-    // the comparison we're checking
-    comp: &'static str,
-) -> impl ExtendedCondition<Math,ConstantFold> {
-    CompareC0C1Condition::new(var, var1, comp)
-}
-
-
-
-
-/// Compares two constants c0 and c1
-pub fn compare_c0_c1_fun(
-    // first constant
-    var: Var,
-    // 2nd constant
-    var1: Var,
-    // the comparison we're checking
-    comp: &'static str,
-) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
-    // Get constants
-    // let var: Var = var.parse().unwrap();
-    // let var1: Var = var1.parse().unwrap();
-
-    move |egraph, _, subst| {
-
-        if subst.get(var).is_none() {
-            panic!("Variable {:?} (var1: {:?}, comp: {:?}) not found in substitution {:?}", var, var1, comp, subst);
-        }
-        if subst.get(var1).is_none() {
-            panic!("Variable1 {:?} (var: {:?}, comp: {:?}) not found in substitution {:?}", var1, var, comp, subst);
-        }
-
-        // Get the eclass of the first constant then match the values of its enodes to check if one of them proves the coming conditions
-        egraph[subst[var1]].nodes.iter().any(|n1| match n1 {
-            // Get the eclass of the second constant then match it to c1
-            Math::Constant(c1) => egraph[subst[var]].nodes.iter().any(|n| match n {
-                // match the comparison then do it
-                Math::Constant(c) => match comp {
-                    "<" => c < c1,
-                    "<a" => c < &c1.abs(),
-                    "<=" => c <= c1,
-                    "<=+1" => c <= &(c1 + 1),
-                    "<=a" => c <= &c1.abs() && c1 != &0,
-                    "<=-a" => c <= &(-c1.abs()) && c1 != &0,
-                    "<=-a+1" => c <= &(1 - c1.abs()) && c != &0,
-                    ">" => c > c1,
-                    // ">a" => c > &c1.abs(),
-                    ">=" => c >= c1,
-                    ">=a" => c >= &(c1.abs()) && c1 != &0,
-                    ">=a-1" => c >= &(c1.abs() - 1) && c1 != &0,
-                    "!=" => c != c1,
-                    "%0" => (*c1 != 0) && (c % c1 == 0),
-                    "!%0" => (*c1 != 0) && (c % c1 != 0),
-                    "%0<" => (*c1 > 0) && (c % c1 == 0),
-                    "%0<0" => (*c1 > 0) && (c % c1 == 0) && (c != &0),
-                    "%0>" => (*c1 < 0) && (c % c1 == 0),
-                    _ => false,
-                },
-                _ => return false,
-            }),
-            _ => return false,
-        })
-    }
-}
 
 
 #[macro_export]
@@ -463,17 +180,17 @@ macro_rules! __rewrite2 {
 #[derive(Clone)]
 // pub struct CpKey(pub Id, pub String, pub Vec<String>, pub Option<Arc<dyn Condition<Math, ConstantFold>>>);
 // pub struct CpKey(pub Id, pub Rewrite);
-pub struct CpKey(pub Id, pub Rc<Rewrite>);
+pub struct CpKey<L,N>(pub Id, pub Rc<ConditionRewrite<L,N>>);
 
-impl PartialEq for CpKey {
+impl<L,N> PartialEq for CpKey<L,N> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0 && self.1.rewrite.name == other.1.rewrite.name
         // self.0 == other.0 && Rc::ptr_eq(&self.1, &other.1)
     }
 }
-impl Eq for CpKey {}
+impl<L,N> Eq for CpKey<L,N> {}
 
-impl Hash for CpKey {
+impl<L,N> Hash for CpKey<L,N> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.0.hash(state);
         self.1.rewrite.name.hash(state);
@@ -526,7 +243,7 @@ pub struct ConditionRewrite<L,N> {
     pub conditions: Vec<Arc<dyn ExtendedCondition<L,N>>>,
 }
 
-impl Hash for ConditionRewrite<Math, ConstantFold> {
+impl<L,N> Hash for ConditionRewrite<L,N> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.rewrite.name.hash(state);
         self.rewrite.lhs.hash(state);
@@ -538,9 +255,10 @@ impl Hash for ConditionRewrite<Math, ConstantFold> {
     }
 }
 
-impl Eq for ConditionRewrite<Math, ConstantFold> {}
+// TODO: we could do this more generally (trait bounds only needed for stringify)
+impl<L:Language,N:Analysis<L>> Eq for ConditionRewrite<L, N> {}
 
-impl PartialEq for ConditionRewrite<Math, ConstantFold> {
+impl<L:Language,N:Analysis<L>> PartialEq for ConditionRewrite<L,N> {
     fn eq(&self, other: &Self) -> bool {
         self.rewrite.name == other.rewrite.name
         && self.rewrite.lhs == other.rewrite.lhs
@@ -609,222 +327,6 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct IsNotZeroCondition {
-    pub var: Var,
-}
-
-impl IsNotZeroCondition {
-    pub fn new(var: &str) -> Self {
-        Self { var: var.parse().unwrap() }
-    }
-}
-
-impl ExtendedCondition<Math, ConstantFold> for IsNotZeroCondition {
-    fn as_condition(&self) -> Arc<dyn Condition<Math, ConstantFold>> {
-        let zero = Math::Constant(0);
-        let var = self.var.clone();
-        let fun = move |egraph: &mut EGraph, _, subst:&Subst| {
-            !egraph[subst[var]].nodes.contains(&zero)
-        };
-        Arc::new(fun)
-    }
-
-    fn vars(&self) -> Vec<Var> {
-        vec![self.var.clone()]
-    }
-
-    // fn apply_subst(&mut self, subst: &HashMap<Var, Var>) -> () {
-    //     if let Some(v) = subst.get(&self.var) {
-    //         self.var = v.clone();
-    //     }
-    // }
-    fn with_subst(&self, subst: &HashMap<Var, Var>) -> Arc<dyn ExtendedCondition<Math, ConstantFold>> {
-        let mut new_cond = self.clone();
-        if let Some(v) = subst.get(&self.var) {
-            new_cond.var = v.clone();
-        }
-        Arc::new(new_cond)
-    }
-
-    fn stringify(&self) -> String {
-        format!("IsNotZero({})", self.var)
-    }
-}
-
-
-#[derive(Debug, Clone)]
-pub struct IsConstPosCondition {
-    pub var: Var,
-}
-impl IsConstPosCondition {
-    pub fn new(var: &str) -> Self {
-        Self { var: var.parse().unwrap() }
-    }
-}
-impl ExtendedCondition<Math, ConstantFold> for IsConstPosCondition {
-    fn as_condition(&self) -> Arc<dyn Condition<Math, ConstantFold>> {
-        let var = self.var.clone();
-        Arc::new(move |egraph: &mut EGraph, _, subst:&Subst| {
-            egraph[subst[var]].nodes.iter().any(|n| match n {
-                Math::Constant(c) => c > &0,
-                _ => return false,
-            })
-        })
-    }
-    fn vars(&self) -> Vec<Var> {
-        vec![self.var.clone()]
-    }
-    // fn apply_subst(&mut self, subst: &HashMap<Var, Var>) -> () {
-    //     if let Some(v) = subst.get(&self.var) {
-    //         self.var = v.clone();
-    //     }
-    // }
-    fn with_subst(&self, subst: &HashMap<Var, Var>) -> Arc<dyn ExtendedCondition<Math, ConstantFold>> {
-        let mut new_cond = self.clone();
-        if let Some(v) = subst.get(&self.var) {
-            new_cond.var = v.clone();
-        }
-        Arc::new(new_cond)
-    }
-
-    fn stringify(&self) -> String {
-        format!("IsConstPos({})", self.var)
-    }
-}
-#[derive(Debug, Clone)]
-pub struct IsConstNegCondition {
-    pub var: Var,
-}
-impl IsConstNegCondition {
-    pub fn new(var: &str) -> Self {
-        Self { var: var.parse().unwrap() }
-    }
-}
-impl ExtendedCondition<Math, ConstantFold> for IsConstNegCondition {
-    fn as_condition(&self) -> Arc<dyn Condition<Math, ConstantFold>> {
-        let var = self.var.clone();
-        Arc::new(move |egraph: &mut EGraph, _, subst:&Subst| {
-            egraph[subst[var]].nodes.iter().any(|n| match n {
-                Math::Constant(c) => c < &0,
-                _ => return false,
-            })
-        })
-    }
-    fn vars(&self) -> Vec<Var> {
-        vec![self.var.clone()]
-    }
-    // fn apply_subst(&mut self, subst: &HashMap<Var, Var>) -> () {
-    //     if let Some(v) = subst.get(&self.var) {
-    //         self.var = v.clone();
-    //     }
-    // }
-    fn with_subst(&self, subst: &HashMap<Var, Var>) -> Arc<dyn ExtendedCondition<Math, ConstantFold>> {
-        let mut new_cond = self.clone();
-        if let Some(v) = subst.get(&self.var) {
-            new_cond.var = v.clone();
-        }
-        Arc::new(new_cond)
-    }
-    fn stringify(&self) -> String {
-        format!("IsConstNeg({})", self.var)
-    }
-}
-
-
-#[derive(Debug, Clone)]
-pub struct CompareC0C1Condition {
-    pub var0: Var,
-    pub var1: Var,
-    pub comparison: &'static str
-}
-
-impl CompareC0C1Condition {
-    pub fn new(var0: &str, var1: &str, comparison: &'static str) -> Self {
-        Self { 
-            var0: var0.parse().unwrap(),
-            var1: var1.parse().unwrap(),
-            comparison,
-        }
-    }
-}
-
-impl ExtendedCondition<Math, ConstantFold> for CompareC0C1Condition {
-    fn as_condition(&self) -> Arc<dyn Condition<Math, ConstantFold>> {
-        // Arc::new(crate::trs::compare_c0_c1_fun(self.var0, self.var1, self.comparison))
-        let var = self.var0.clone();
-        let var1 = self.var1.clone();
-        let comp = self.comparison;
-        Arc::new(move |egraph: &mut EGraph, _, subst:&Subst| {
-
-            if subst.get(var).is_none() {
-                panic!("Variable {:?} (var1: {:?}, comp: {:?}) not found in substitution {:?}", var, var1, comp, subst);
-            }
-            if subst.get(var1).is_none() {
-                panic!("Variable1 {:?} (var: {:?}, comp: {:?}) not found in substitution {:?}", var1, var, comp, subst);
-            }
-
-            // Get the eclass of the first constant then match the values of its enodes to check if one of them proves the coming conditions
-            egraph[subst[var1]].nodes.iter().any(|n1| match n1 {
-                // Get the eclass of the second constant then match it to c1
-                Math::Constant(c1) => egraph[subst[var]].nodes.iter().any(|n| match n {
-                    // match the comparison then do it
-                    Math::Constant(c) => match comp {
-                        "<" => c < c1,
-                        "<a" => c < &c1.abs(),
-                        "<=" => c <= c1,
-                        "<=+1" => c <= &(c1 + 1),
-                        "<=a" => c <= &c1.abs() && c1 != &0,
-                        "<=-a" => c <= &(-c1.abs()) && c1 != &0,
-                        "<=-a+1" => c <= &(1 - c1.abs()) && c != &0,
-                        ">" => c > c1,
-                        // ">a" => c > &c1.abs(),
-                        ">=" => c >= c1,
-                        ">=a" => c >= &(c1.abs()) && c1 != &0,
-                        ">=a-1" => c >= &(c1.abs() - 1) && c1 != &0,
-                        "!=" => c != c1,
-                        "%0" => (*c1 != 0) && (c % c1 == 0),
-                        "!%0" => (*c1 != 0) && (c % c1 != 0),
-                        "%0<" => (*c1 > 0) && (c % c1 == 0),
-                        "%0<0" => (*c1 > 0) && (c % c1 == 0) && (c != &0),
-                        "%0>" => (*c1 < 0) && (c % c1 == 0),
-                        _ => false,
-                    },
-                    _ => return false,
-                }),
-                _ => return false,
-            })
-        })
-    }
-
-    fn vars(&self) -> Vec<Var> {
-        vec![self.var0.clone(), self.var1.clone()]
-    }
-
-    // fn apply_subst(&mut self, subst: &HashMap<Var, Var>) -> () {
-    //     if let Some(v) = subst.get(&self.var0) {
-    //         self.var0 = v.clone();
-    //     }
-    //     if let Some(v) = subst.get(&self.var1) {
-    //         self.var1 = v.clone();
-    //     }
-    // }
-
-    fn with_subst(&self, subst: &HashMap<Var, Var>) -> Arc<dyn ExtendedCondition<Math, ConstantFold>> {
-        let mut new_cond = self.clone();
-        if let Some(v) = subst.get(&self.var0) {
-            new_cond.var0 = v.clone();
-        }
-        if let Some(v) = subst.get(&self.var1) {
-            new_cond.var1 = v.clone();
-        }
-        Arc::new(new_cond)
-    }
-
-    fn stringify(&self) -> String {
-        format!("CompareC0C1({}, {}, {})", self.var0, self.var1, self.comparison)
-    }
-}
 
 
 #[derive(Debug, Clone)]
@@ -871,7 +373,11 @@ impl CompareCondition {
 
 
 
-fn canonical_name_rewrite(rewrite: Rewrite) -> Rewrite {
+fn canonical_name_rewrite<L,N>(rewrite: ConditionRewrite<L,N>) -> ConditionRewrite<L,N> 
+where
+    L: Language + 'static,
+    N: Analysis<L> + 'static,
+{
 
     // collect all variables from lhs, rhs, and conditions
     // note: this should be equivalent to vars lhs
@@ -968,7 +474,17 @@ fn canonical_name_rewrite(rewrite: Rewrite) -> Rewrite {
 }
 
 
-pub fn simplify_expression(expression: &ExpressionStruct, loggers: &Loggers, params: &Args) -> ResultStructure {
+pub fn simplify_expression<L,N>(
+    expression: &ExpressionStruct, 
+    loggers: &Loggers, 
+    params: &Args,
+    rules: &Vec<ConditionRewrite<L,N>>,
+    goals: &[Pattern<L>],
+) -> ResultStructure 
+where
+    L: Language + 'static,
+    N: Analysis<L> + Clone + Default + 'static,
+{
 
     // println!("Starting Expression: {}", expression.index);
     let start_expression = &expression.expression;
@@ -976,12 +492,12 @@ pub fn simplify_expression(expression: &ExpressionStruct, loggers: &Loggers, par
 
 
     // Parse the start expression and the goals.
-    let start: RecExpr<Math> = start_expression.parse().unwrap();
-    let end_1: Pattern<Math> = "1".parse().unwrap();
-    let end_0: Pattern<Math> = "0".parse().unwrap();
+    let start: RecExpr<L> = start_expression.parse().unwrap();
+    // let end_1: Pattern<Math> = "1".parse().unwrap();
+    // let end_0: Pattern<Math> = "0".parse().unwrap();
 
-    // Put the goals we want to check in an array.
-    let goals = [end_0.clone(), end_1.clone()];
+    // // Put the goals we want to check in an array.
+    // let goals = [end_0.clone(), end_1.clone()];
     let mut result = false;
     let mut proved_goal_index = 0;
     let mut id;
@@ -1013,12 +529,12 @@ pub fn simplify_expression(expression: &ExpressionStruct, loggers: &Loggers, par
     // id = runner.egraph.find(*runner.roots.last().unwrap());
 
 
-    let rules = crate::rules::rules();
-    let mut cp_rules = Vec::<Rewrite>::new();
+    // let rules = crate::math::rules();
+    let mut cp_rules = Vec::<ConditionRewrite<L, N>>::new();
     // let mut critical_pairs_set = HashSet::<(&str,&str)>::new();
     // let mut critical_pairs_set = HashSet::<(Rewrite,Rewrite)>::new();
     // let mut critical_pairs = HashSet::<(String,(Id,String, Vec<String>, ),(Id,String, Vec<String>))>::new();
-    let mut critical_pairs = HashSet::<(usize,CpKey,CpKey)>::new();
+    let mut critical_pairs = HashSet::<(usize,CpKey<L,N>,CpKey<L,N>)>::new();
         // (Id,String, Vec<String>, Option<Arc<dyn Condition<Math, ConstantFold>>>)
         // (Id,String, Vec<String>, Option<Arc<dyn Condition<Math, ConstantFold>>>))>::new();
     let mut rule_name_counter = 0;
@@ -1107,7 +623,7 @@ pub fn simplify_expression(expression: &ExpressionStruct, loggers: &Loggers, par
         measure_block!("egraph", {
         runner = 
         // if use_iteration_check {
-            runner_builder.run_check_iteration(all_rules.iter().map(|r| &r.rewrite), &goals);
+            runner_builder.run_check_iteration(all_rules.iter().map(|r| &r.rewrite), goals);
         // } else {
         //     runner_builder.run(all_rules.iter().map(|r| &r.rewrite))
         // };
@@ -1252,7 +768,7 @@ pub fn simplify_expression(expression: &ExpressionStruct, loggers: &Loggers, par
 // });
 
         info!(loggers.logger, "    Rule Parents");
-let mut sub_applicable: Vec<FxHashSet<CpKey>> = vec![FxHashSet::default(); max_id_usize + 1];
+let mut sub_applicable: Vec<FxHashSet<CpKey<L,N>>> = vec![FxHashSet::default(); max_id_usize + 1];
 
 measure_block!("rule parents", {
     for r in rules_for_cp.into_iter() {
@@ -1356,12 +872,12 @@ let mut critical_pairs_set: HashSet<(usize, usize)> = HashSet::new();
 
 measure_block!("find cp candidate", {
     // These maps ensure we only keep one application per rule ID
-    let mut unique_local: HashMap<usize, &CpKey> = HashMap::new();
-    let mut unique_inherited: HashMap<usize, &CpKey> = HashMap::new();
+    let mut unique_local: HashMap<usize, &CpKey<L,N>> = HashMap::new();
+    let mut unique_inherited: HashMap<usize, &CpKey<L,N>> = HashMap::new();
     
     // We store tuples of (rule_id, &CpKey) to pass into the N^2 loops
-    let mut local_apps: Vec<(usize, &CpKey)> = Vec::new();
-    let mut inherited_apps: Vec<(usize, &CpKey)> = Vec::new();
+    let mut local_apps: Vec<(usize, &CpKey<L,N>)> = Vec::new();
+    let mut inherited_apps: Vec<(usize, &CpKey<L,N>)> = Vec::new();
 
     for (eclass, apps) in sub_applicable.iter().enumerate() {
         // Clear buffers to reuse memory allocations
@@ -1397,7 +913,7 @@ measure_block!("find cp candidate", {
 
         // --- STEP 3: The highly optimized N^2 Loops ---
         // Notice we take the pre-calculated `id` directly!
-        let mut process_pair = |(id_i, app_i): &(usize, &CpKey), (id_j, app_j): &(usize, &CpKey)| {
+        let mut process_pair = |(id_i, app_i): &(usize, &CpKey<L,N>), (id_j, app_j): &(usize, &CpKey<L,N>)| {
             
             // Fast integer comparison instead of string comparison
             let pair = if id_i < id_j {

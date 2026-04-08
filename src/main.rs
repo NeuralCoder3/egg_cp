@@ -11,7 +11,8 @@ mod logger;
 mod io;
 mod structs;
 mod simplify;
-mod rules;
+// mod rules;
+mod math;
 use logger::init_loggers;
 use io::reader::read_expressions;
 
@@ -123,6 +124,12 @@ fn main() {
 
     let mut solved = 0;
 
+    let rules = crate::math::rules();
+    let goals = [
+        "0".parse().unwrap(),
+        "1".parse().unwrap(),
+    ];
+    
     let init_time = std::time::Instant::now();
     for expression in expression_vect.iter() {
         // rulset_class = -1
@@ -133,7 +140,9 @@ fn main() {
         let mut result = simplify_expression(
             &expression,
             &loggers,
-            &args
+            &args,
+            &rules,
+            &goals,
         );
 
         result.add_halide(expression.halide_result.clone(), expression.halide_time);
