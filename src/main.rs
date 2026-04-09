@@ -1,3 +1,4 @@
+use std::rc::Rc;
 use std::{ffi::OsString, fs};
 use std::io::Write;
 use std::path::Path;
@@ -124,7 +125,7 @@ fn main() {
 
     let mut solved = 0;
 
-    let rules = crate::math::rules();
+    let rules = crate::math::rules().into_iter().map(|r| Rc::new(r)).collect::<Vec<_>>();
     let goals = [
         "0".parse().unwrap(),
         "1".parse().unwrap(),

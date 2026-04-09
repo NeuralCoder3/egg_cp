@@ -2,6 +2,7 @@ use crate::rewrite2 as rw;
 use crate::simplify::{ConditionRewrite, ExtendedCondition};
 // pub type Rewrite = ConditionRewrite<Math, ConstantFold>;
 use egg::{Analysis, Condition, Id, Language, Subst, Symbol, Var, define_language};
+use rustc_hash::FxHashMap;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -257,7 +258,7 @@ impl ExtendedCondition<Math, ConstantFold> for IsNotZeroCondition {
     //         self.var = v.clone();
     //     }
     // }
-    fn with_subst(&self, subst: &HashMap<Var, Var>) -> Arc<dyn ExtendedCondition<Math, ConstantFold>> {
+    fn with_subst(&self, subst: &FxHashMap<Var, Var>) -> Arc<dyn ExtendedCondition<Math, ConstantFold>> {
         let mut new_cond = self.clone();
         if let Some(v) = subst.get(&self.var) {
             new_cond.var = v.clone();
@@ -298,7 +299,7 @@ impl ExtendedCondition<Math, ConstantFold> for IsConstPosCondition {
     //         self.var = v.clone();
     //     }
     // }
-    fn with_subst(&self, subst: &HashMap<Var, Var>) -> Arc<dyn ExtendedCondition<Math, ConstantFold>> {
+    fn with_subst(&self, subst: &FxHashMap<Var, Var>) -> Arc<dyn ExtendedCondition<Math, ConstantFold>> {
         let mut new_cond = self.clone();
         if let Some(v) = subst.get(&self.var) {
             new_cond.var = v.clone();
@@ -337,7 +338,7 @@ impl ExtendedCondition<Math, ConstantFold> for IsConstNegCondition {
     //         self.var = v.clone();
     //     }
     // }
-    fn with_subst(&self, subst: &HashMap<Var, Var>) -> Arc<dyn ExtendedCondition<Math, ConstantFold>> {
+    fn with_subst(&self, subst: &FxHashMap<Var, Var>) -> Arc<dyn ExtendedCondition<Math, ConstantFold>> {
         let mut new_cond = self.clone();
         if let Some(v) = subst.get(&self.var) {
             new_cond.var = v.clone();
@@ -428,7 +429,7 @@ impl ExtendedCondition<Math, ConstantFold> for CompareC0C1Condition {
     //     }
     // }
 
-    fn with_subst(&self, subst: &HashMap<Var, Var>) -> Arc<dyn ExtendedCondition<Math, ConstantFold>> {
+    fn with_subst(&self, subst: &FxHashMap<Var, Var>) -> Arc<dyn ExtendedCondition<Math, ConstantFold>> {
         let mut new_cond = self.clone();
         if let Some(v) = subst.get(&self.var0) {
             new_cond.var0 = v.clone();

@@ -8,7 +8,7 @@ use egg::rewrite::{SubstitutionSet, Term, all_critical_pair_ref, parse_term, sub
 use egg::{Analysis, AstDepth, Condition, ConditionalApplier, Extractor, Id, Language, Pattern, RecExpr, Runner, Searcher, StopReason, Subst, Var};
 use hotpath::measure_block;
 use colored::*;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use slog::info;
 
 use crate::{Args, logger::Loggers, structs::{ExpressionStruct, ResultStructure}};
@@ -215,7 +215,7 @@ where
 
     // fn apply_subst(&mut self, subst: &HashMap<Var, Var>) -> ();
     // fn with_subst(&self, subst: &HashMap<Var, Var>) -> Self where Self: Sized;
-    fn with_subst(&self, subst: &HashMap<Var, Var>) -> Arc<dyn ExtendedCondition<L,N>>;
+    fn with_subst(&self, subst: &FxHashMap<Var, Var>) -> Arc<dyn ExtendedCondition<L,N>>;
 
     fn stringify(&self) -> String;
 }
@@ -373,7 +373,7 @@ where
 
 
 
-fn canonical_name_rewrite<L,N>(rewrite: ConditionRewrite<L,N>) -> ConditionRewrite<L,N> 
+fn canonical_name_rewrite<L,N>(rewrite: &ConditionRewrite<L,N>) -> ConditionRewrite<L,N> 
 where
     L: Language + 'static,
     N: Analysis<L> + 'static,
@@ -405,11 +405,11 @@ where
     all_vars.sort();
     all_vars.dedup();
 
-    let subst_map : HashMap<String, String> = all_vars.iter().enumerate()
+    let subst_map : FxHashMap<String, String> = all_vars.iter().enumerate()
         .map(|(i, v)| {
             (v.clone(), format!("?v{}", i))
         }).collect();
-    let var_subst_map : HashMap<Var, Var> = subst_map.iter()
+    let var_subst_map : FxHashMap<Var, Var> = subst_map.iter()
         .map(|(s, t)| {
             let old_var = s.parse().unwrap();
             let new_var = t.parse().unwrap();
@@ -455,7 +455,7 @@ where
 
     ConditionRewrite::new_arc(
         egg::Rewrite::new(
-            rewrite.rewrite.name,
+            rewrite.rewrite.name.clone(),
             // lhs: new_lhs,
             // rhs: new_rhs,
             new_lhs_pattern.to_string(),
@@ -478,7 +478,7 @@ pub fn simplify_expression<L,N>(
     expression: &ExpressionStruct, 
     loggers: &Loggers, 
     params: &Args,
-    rules: &Vec<ConditionRewrite<L,N>>,
+    rules: &Vec<Rc<ConditionRewrite<L,N>>>,
     goals: &[Pattern<L>],
 ) -> ResultStructure 
 where
@@ -515,7 +515,7 @@ where
     let mut runner;
 
 
-    let mut cp_rules = Vec::<ConditionRewrite<L, N>>::new();
+    let mut cp_rules = Vec::<Rc<ConditionRewrite<L, N>>>::new();
     let mut critical_pairs = HashSet::<(usize,CpKey<L,N>,CpKey<L,N>)>::new();
     let mut rule_name_counter = 0;
 
@@ -536,7 +536,7 @@ where
     info!(loggers.applied_rules, "Expression: {}", start_expression);
 
 
-
+    let mut sub_applicable: Vec<FxHashSet<CpKey<L,N>>> = Vec::new();
     // Run ES on each extracted expression until we reach a limit or we prove the expression.
     loop {
         info!(loggers.logger, "  Iteration {}", i);
@@ -564,7 +564,7 @@ where
             });
 
         cp_rules = cp_rules.into_iter()
-            .map(canonical_name_rewrite)
+            .map(|r| Rc::new(canonical_name_rewrite(r.as_ref())))
             .collect::<HashSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
@@ -632,27 +632,31 @@ where
 
 
 
-
-        let rules_for_cp = 
-            rules.iter().chain(
-                cp_rules
-                .iter()
-                .take(rules_for_cp_count)
-            )
-            .cloned()
-            .collect::<Vec<_>>();
+        let rules_for_cp_iter = rules.iter().chain(cp_rules.iter().take(rules_for_cp_count));
+        // let rules_for_cp = 
+        //     rules.iter().chain(
+        //         cp_rules
+        //         .iter()
+        //         .take(rules_for_cp_count)
+        //     )
+        //     .cloned()
+        //     .collect::<Vec<_>>();
 
         info!(loggers.logger, "    Collect Parents");
         // println!("VVV: Collecting RuleApp");
         // io::stdout().flush().unwrap();
 
-        let max_id_usize = runner.egraph.classes()
-            .map(|c| usize::from(c.id))
-            .max()
-            .unwrap_or(0);
+        // let max_id_usize = runner.egraph.classes()
+        //     .map(|c| usize::from(c.id))
+        //     .max()
+        //     .unwrap_or(0);
+
+        let max_id_usize = runner.egraph.classes().map(|c| usize::from(c.id)).max().unwrap_or(0);
 
         // 2. Use a flat vector instead of HashMap for parents
-        let mut parents: Vec<Vec<Id>> = vec![Vec::new(); max_id_usize + 1];
+        // let mut parents: Vec<Vec<Id>> = vec![Vec::new(); max_id_usize + 1];
+        let mut parents: Vec<Vec<Id>> = Vec::new();
+        parents.resize_with(max_id_usize + 1, Vec::new);
 
         measure_block!("collect parents", {
             for eclass in runner.egraph.classes() {
@@ -671,16 +675,32 @@ where
         });
 
         info!(loggers.logger, "    Rule Parents");
-let mut sub_applicable: Vec<FxHashSet<CpKey<L,N>>> = vec![FxHashSet::default(); max_id_usize + 1];
+// let mut sub_applicable: Vec<FxHashSet<CpKey<L,N>>> = vec![FxHashSet::default(); max_id_usize + 1];
 
 measure_block!("rule parents", {
-    for r in rules_for_cp.into_iter() {
-        let rc_rule = Rc::new(r);
+    
+    if sub_applicable.len() < max_id_usize + 1 {
+        sub_applicable.resize_with(max_id_usize + 1, FxHashSet::default);
+    }
+    
+    for set in sub_applicable.iter_mut() {
+        set.clear();
+    }
+
+
+
+    let mut worklist: Vec<(Id, Id)> = Vec::with_capacity(128);
+    for r in rules_for_cp_iter {
+        // let rc_rule = Rc::new(r);
+        // let matches = rc_rule.rewrite.search(&runner.egraph);
+        let rc_rule = Rc::clone(r); // Assuming `rules` holds Rc<ConditionRewrite>
         let matches = rc_rule.rewrite.search(&runner.egraph);
-        
-        let mut worklist: Vec<(Id, Id)> = matches.iter()
-            .map(|m| (m.eclass, m.eclass)) // (current, source)
-            .collect();
+
+        worklist.clear();
+        worklist.extend(matches.iter().map(|m| (m.eclass, m.eclass)));      
+        // let mut worklist: Vec<(Id, Id)> = matches.iter()
+        //     .map(|m| (m.eclass, m.eclass)) // (current, source)
+        //     .collect();
             
         while let Some((current, source)) = worklist.pop() {
             
@@ -722,12 +742,15 @@ measure_block!("rule parents", {
 
 // 1. State initialized outside the measurement block
 let mut rule_id_map: HashMap<String, usize> = HashMap::new();
-let mut critical_pairs_set: HashSet<(usize, usize)> = HashSet::new();
+// let mut critical_pairs_set: HashSet<(usize, usize)> = HashSet::new();
 
 measure_block!("find cp candidate", {
     // These maps ensure we only keep one application per rule ID
-    let mut unique_local: HashMap<usize, &CpKey<L,N>> = HashMap::new();
-    let mut unique_inherited: HashMap<usize, &CpKey<L,N>> = HashMap::new();
+    // let mut unique_local: HashMap<usize, &CpKey<L,N>> = HashMap::new();
+    // let mut unique_inherited: HashMap<usize, &CpKey<L,N>> = HashMap::new();
+    let mut unique_local: FxHashMap<usize, &CpKey<L,N>> = FxHashMap::default();
+    let mut unique_inherited: FxHashMap<usize, &CpKey<L,N>> = FxHashMap::default();
+    let mut critical_pairs_set: FxHashSet<(usize, usize)> = FxHashSet::default();
     
     // We store tuples of (rule_id, &CpKey) to pass into the N^2 loops
     let mut local_apps: Vec<(usize, &CpKey<L,N>)> = Vec::new();
@@ -823,27 +846,33 @@ measure_block!("find cp candidate", {
                     fn is_var(t: &Term) -> bool {
                         matches!(t, Term::Var(_))
                     }
-                    let cp_name_lr = format!("cp_{}_lr", rule_name_counter);
-                    let cp_name_rl = format!("cp_{}_rl", rule_name_counter);
                     rule_name_counter += 1;
 
-                    let rename_subst_map: HashMap<Var, Var> = right_subst.iter().map(|(k,v)| {
+
+                    let rename_subst_map: FxHashMap<Var, Var> = right_subst.iter().map(|(k,v)| {
                         let var1 = k.parse().unwrap();
                         let var2 = v.parse().unwrap();
                         (var1, var2)
                     }).collect();
-                    let unifier_var_subst: HashMap<String, String> = unifier.iter().filter_map(|(k,v)| {
+                    let unifier_subst_map: FxHashMap<Var, Var> = unifier.iter().filter_map(|(k,v)| {
                         if let Term::Var(var) = v {
-                            Some((k.clone(), var.to_string()))
+                            Some((k.parse().unwrap(), var.parse().unwrap()))
                         } else {
                             None
                         }
                     }).collect();
-                    let unifier_subst_map: HashMap<Var, Var> = unifier_var_subst.iter().map(|(k,v)| {
-                        let var1 = k.parse().unwrap();
-                        let var2 = v.parse().unwrap();
-                        (var1, var2)
-                    }).collect();
+                    // let unifier_var_subst: FxHashMap<String, String> = unifier.iter().filter_map(|(k,v)| {
+                    //     if let Term::Var(var) = v {
+                    //         Some((k.clone(), var.to_string()))
+                    //     } else {
+                    //         None
+                    //     }
+                    // }).collect();
+                    // let unifier_subst_map: FxHashMap<Var, Var> = unifier_var_subst.iter().map(|(k,v)| {
+                    //     let var1 = k.parse().unwrap();
+                    //     let var2 = v.parse().unwrap();
+                    //     (var1, var2)
+                    // }).collect();
                     // let total_subst_map: HashMap<Var, Var> = rename_subst_map.iter().chain(unifier_subst_map.iter()).map(|(k,v)| (k.clone(), v.clone())).collect();
                     let r2_conds = rule2.conditions.iter().map(|c| {
                         // c.with_subst(&total_subst_map)
@@ -856,16 +885,22 @@ measure_block!("find cp candidate", {
                         .map(|c| { c.clone() })
                         .collect::<Vec<_>>();
 
-                    let condsstr = conds.iter().map(|c| c.stringify()).collect::<Vec<_>>();
-                    let condsstr = "conds: ".to_string() + &format!("{:?}", condsstr);
-
+                    // TODO: convert directly
                     let lhs_pattern = Pattern::from_str(&l.to_string()).unwrap();
                     let rhs_pattern = Pattern::from_str(&r.to_string()).unwrap();
+                    // let lhs_pattern : Pattern<L> = l.clone();
+                    // let rhs_pattern : Pattern<L> = r.clone();
 
 
                     let condvars = conds.iter().flat_map(|c| 
                         c.vars().iter().map(|v| v.to_string()).collect::<Vec<_>>()
                     ).collect::<HashSet<_>>();
+
+                    let cp_name_lr = format!("cp_{}_lr", rule_name_counter);
+                    let cp_name_rl = format!("cp_{}_rl", rule_name_counter);
+
+                    let condsstr = conds.iter().map(|c| c.stringify()).collect::<Vec<_>>();
+                    let condsstr = "conds: ".to_string() + &format!("{:?}", condsstr);
 
                     // is there a condition variable that does not occur in the rule?
                     if condvars.iter().any(|v| !var_l.contains(v) && !var_r.contains(v)) {
@@ -930,7 +965,7 @@ measure_block!("find cp candidate", {
                                 applier: rhs_pattern.clone(),
                             };
 
-                        cp_rules.push(ConditionRewrite::new_arc(
+                        cp_rules.push(Rc::new(ConditionRewrite::new_arc(
                             egg::Rewrite::new(
                                 cp_name_lr.as_str(),
                                 lhs_pattern.clone().to_string(),
@@ -940,7 +975,7 @@ measure_block!("find cp candidate", {
                                 cond_applier,
                             ).unwrap(),
                             conds.iter().cloned().collect(),
-                        ));
+                        )));
                     }
                     if var_l.iter().all(|v| var_r.contains(v)) && !is_var(r) {
                         // if var_l is subset of var_r
@@ -950,7 +985,7 @@ measure_block!("find cp candidate", {
                                 condition: all_conditions_extended(conds.clone()),
                                 applier: lhs_pattern.clone(),
                             };
-                        cp_rules.push(ConditionRewrite::new_arc(
+                        cp_rules.push(Rc::new(ConditionRewrite::new_arc(
                             egg::Rewrite::new(
                                 cp_name_rl.as_str(),
                                 rhs_pattern.to_string(),
@@ -960,7 +995,7 @@ measure_block!("find cp candidate", {
                                 cond_applier,
                             ).unwrap(),
                             conds
-                        ));
+                        )));
                     }
                 }
             }
