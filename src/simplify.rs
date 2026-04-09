@@ -329,31 +329,31 @@ where
 
 
 
-#[derive(Debug, Clone)]
-pub struct CompareCondition {
-    pub vars: Vec<Var>,
-    // pub evaluation: impl Fn(Vec<i64>) -> bool + 'static,
-    // pub evaluation: fn(Vec<i64>) -> bool,
-    pub evaluation: fn(BTreeMap<String, i64>) -> bool,
-    // map new substed vars back to original
-    pub var_subst: BTreeMap<Var, Var>,
-}
+// #[derive(Debug, Clone)]
+// pub struct CompareCondition {
+//     pub vars: Vec<Var>,
+//     // pub evaluation: impl Fn(Vec<i64>) -> bool + 'static,
+//     // pub evaluation: fn(Vec<i64>) -> bool,
+//     pub evaluation: fn(BTreeMap<String, i64>) -> bool,
+//     // map new substed vars back to original
+//     pub var_subst: BTreeMap<Var, Var>,
+// }
 
-impl CompareCondition {
-    pub fn new(vars: Vec<&str>, evaluation: fn(BTreeMap<String, i64>) -> bool) -> Self {
-        let vars : Vec<Var> = vars.into_iter().map(|v| v.parse().unwrap()).collect();
-        Self {
-            vars: vars.clone(),
-            evaluation,
-            var_subst: // vars -> vars
-                vars.iter()
-                .map(|v| {
-                    (v.clone(), v.clone())
-                })
-                .collect(),
-        }
-    }
-}
+// impl CompareCondition {
+//     pub fn new(vars: Vec<&str>, evaluation: fn(BTreeMap<String, i64>) -> bool) -> Self {
+//         let vars : Vec<Var> = vars.into_iter().map(|v| v.parse().unwrap()).collect();
+//         Self {
+//             vars: vars.clone(),
+//             evaluation,
+//             var_subst: // vars -> vars
+//                 vars.iter()
+//                 .map(|v| {
+//                     (v.clone(), v.clone())
+//                 })
+//                 .collect(),
+//         }
+//     }
+// }
 
 
 
@@ -508,35 +508,15 @@ where
 
     info!(loggers.logger, "Starting expression {}: {}", expression.index, start_expression);
 
-    // if report {
-    //     println!(
-    //         "\n====================================\nProving Expression:\n {}\n",
-    //         start_expression
-    //     )
-    // }
-
     let mut i = 0;
     let mut expr = start;
 
     //Initialize the runner with the limits and the initial expression.
-    // let mut runner = Runner::default()
-    //     .with_iter_limit(params.0)
-    //     .with_node_limit(params.1)
-    //     .with_time_limit(Duration::from_secs_f64(threshold))
-    //     .with_expr(&expr);
     let mut runner;
-    // Get the Id of the root eclass containing the initial expression.
-    // id = runner.egraph.find(*runner.roots.last().unwrap());
 
 
-    // let rules = crate::math::rules();
     let mut cp_rules = Vec::<ConditionRewrite<L, N>>::new();
-    // let mut critical_pairs_set = HashSet::<(&str,&str)>::new();
-    // let mut critical_pairs_set = HashSet::<(Rewrite,Rewrite)>::new();
-    // let mut critical_pairs = HashSet::<(String,(Id,String, Vec<String>, ),(Id,String, Vec<String>))>::new();
     let mut critical_pairs = HashSet::<(usize,CpKey<L,N>,CpKey<L,N>)>::new();
-        // (Id,String, Vec<String>, Option<Arc<dyn Condition<Math, ConstantFold>>>)
-        // (Id,String, Vec<String>, Option<Arc<dyn Condition<Math, ConstantFold>>>))>::new();
     let mut rule_name_counter = 0;
 
     // let keep_cp_rules = 100;
@@ -552,16 +532,6 @@ where
     let rules_for_cp_count = params.cp_retain;
     // let rules_for_cp_count = 0;
 
-    // let applied_rule_file = std::fs::OpenOptions::new()
-    //     .create(true)
-    //     .append(true)
-    //     .open("tmp/applied_rules.txt")
-    //     .unwrap();
-    // let mut applied_rule_writer = BufWriter::new(applied_rule_file);
-    // {
-    //     writeln!(applied_rule_writer, "ID {}:", expression.index).unwrap();
-    //     writeln!(applied_rule_writer, "Expression: {}", start_expression).unwrap();
-    // }
     info!(loggers.applied_rules, "ID {}:", expression.index);
     info!(loggers.applied_rules, "Expression: {}", start_expression);
 
@@ -605,15 +575,6 @@ where
             .take(keep_cp_rules)
             .cloned()
             .collect::<Vec<_>>();
-
-            // if picked_cp_rules.len() > 0 {
-            //     panic!("Stop after canonicalization");
-            // }
-
-        // println!("Used CP rules ({}): ", picked_cp_rules.len());
-        // for r in picked_cp_rules.iter() {
-        //     println!("  {}: {} => {} (with conditions: {})", r.rewrite.name, r.rewrite.lhs, r.rewrite.rhs, r.conditions.iter().map(|c| c.stringify()).collect::<Vec<_>>().join(", "));
-        // }
 
         let all_rules = rules.iter().chain(picked_cp_rules.iter()).collect::<Vec<_>>();
 
@@ -668,14 +629,6 @@ where
         expr = best_exprr;
         total_time += extraction_time;
         }); // measure
-        // if report {
-        //     println!(
-        //         "Starting pass {} with Expr: {} in {}",
-        //         i,
-        //         format!("{}", expr).bright_green().bold(),
-        //         format!("{}", extraction_time).bright_green().bold()
-        //     );
-        // }
 
 
 
@@ -717,56 +670,6 @@ where
             }
         });
 
-            // parents: for each eclass a list of classes that reference it
-        //     let mut parents = std::collections::HashMap::<Id, Vec<Id>>::new();
-        // measure_block!("collect parents", {
-        //     for eclass in runner.egraph.classes().map(|c| c) {
-        //         for node in &eclass.nodes {
-        //             node.for_each(|child| {
-        //                 parents
-        //                     .entry(child)
-        //                     .or_insert_with(Vec::new)
-        //                     .push(eclass.id);
-        //             });
-        //         }
-        //     }
-        // }); // measure
-
-
-        // println!("VVV: Propagate Parents1");
-        // io::stdout().flush().unwrap();
-
-
-// let mut sub_applicable = std::collections::HashMap::<Id, std::collections::HashSet<CpKey>>::new();
-
-// measure_block!("rule parents", {
-//     for r in rules_for_cp.into_iter() {
-//         let matches = r.rewrite.search(&runner.egraph);
-        
-//         let mut worklist: Vec<(Id, Id)> = matches.iter()
-//             .map(|m| (m.eclass, m.eclass)) // (current, source)
-//             .collect();
-            
-//         while let Some((current, source)) = worklist.pop() {
-            
-//             // TODO: no clone (use id/name/rc<>)
-//             let new_key = CpKey(source, r.clone()); 
-            
-//             let entry = sub_applicable
-//                 .entry(current)
-//                 .or_insert_with(std::collections::HashSet::new);
-                
-//             if entry.insert(new_key) {
-//                 if let Some(ps) = parents.get(&current) {
-//                     for p in ps {
-//                         worklist.push((*p, source));
-//                     }
-//                 }
-//             }
-//         }
-//     }
-// });
-
         info!(loggers.logger, "    Rule Parents");
 let mut sub_applicable: Vec<FxHashSet<CpKey<L,N>>> = vec![FxHashSet::default(); max_id_usize + 1];
 
@@ -798,55 +701,6 @@ measure_block!("rule parents", {
     }
 });
 
-
-            // propagate upwards, eclass -> application point, rule, and condition
-            // let mut sub_applicable = std::collections::HashMap::<Id, HashSet<(Id,String, Vec<String>, Option<Arc<dyn Condition<Math, ConstantFold>>>)>>::new();
-            // let mut sub_applicable = std::collections::HashMap::<Id, HashSet<CpKey>>::new();
-        //     let mut sub_applicable = std::collections::HashMap::<Id, Vec<CpKey>>::new();
-        // measure_block!("rule parents", {
-        //     for r in rules_for_cp.into_iter() {
-        //     // for r in rules.clone().into_iter() {
-        //         // if !r.cond.is_empty() {
-        //         //     continue;
-        //         // }
-        //         let matches = r.rewrite.search(&runner.egraph);
-        //         // eclasses where the rule applies
-        //         let mut worklist = matches.iter()
-        //             .map(|m| m.eclass)
-        //             .map(|id| (id, id)) // (current, source)
-        //             .collect::<HashSet<_>>();
-        //         while !worklist.is_empty() {
-        //             let (current, source) = worklist.iter().next().unwrap().clone();
-        //             worklist.remove(&(current, source));
-        //             let entry = sub_applicable
-        //                 .entry(current)
-        //                 // .or_insert_with(HashSet::new);
-        //                 .or_insert_with(Vec::new);
-        //             let new_key = CpKey(source, r.clone());
-        //             let fresh = !entry.iter().any(|c| c == &new_key);
-        //             if fresh {
-        //                 entry.push(new_key);
-        //                 if let Some(ps) = parents.get(&current) {
-        //                     for p in ps {
-        //                         worklist.insert((*p, source));
-        //                     }
-        //                 }
-        //             }
-        //             // if entry.insert(CpKey(source, r.clone())) {
-        //             //     // only continue when freshly inserted => terminate at the latest after every eclass has been visited once
-        //             //     if let Some(ps) = parents.get(&current) {
-        //             //         for p in ps {
-        //             //             worklist.insert((*p, source));
-        //             //         }
-        //             //     }
-        //             // }
-        //         }
-        //     }
-        // }); // measure
-
-        // println!("VVV: Write applicable rules to file");
-        // io::stdout().flush().unwrap();
-        //     writeln!(applied_rule_writer, " Iteration {}:", i).unwrap();
         info!(loggers.applied_rules, " Iteration {}:", i);
         // for (eclass, apps) in sub_applicable.iter() {
         for (eclass, apps) in sub_applicable.iter().enumerate() {
@@ -949,111 +803,6 @@ measure_block!("find cp candidate", {
     }
 });
 
-            // only propagate up to either other node => intersection only at one of the rules
-            // at class c, get all pairs and take these that have one component be c
-            // find overlaps
-// measure_block!("find cp candidate", {
-//     // sub applicate: e class -> list of all rules applicable together with origin
-//     // for (eclass, apps) in sub_applicable.iter() {
-//     let mut local_apps = Vec::new();
-//     let mut inherited_apps = Vec::new();
-//     for (eclass, apps) in sub_applicable.iter().enumerate() {
-//         local_apps.clear();
-//         inherited_apps.clear();
-        
-//         for app in apps {
-//             if usize::from(app.0) == eclass { // app.0 is the `src` Id
-//                 local_apps.push(app);
-//             } else {
-//                 inherited_apps.push(app);
-//             }
-//         }
-
-//         let mut process_pair = |app_i: &CpKey, app_j: &CpKey| {
-//             let CpKey(src_i, rule_i) = app_i;
-//             let CpKey(src_j, rule_j) = app_j;
-            
-//             let name_i = rule_i.rewrite.name();
-//             let name_j = rule_j.rewrite.name();
-            
-//             let pair = if name_i < name_j {
-//                 // (name_i, name_j) 
-//                 (name_i,name_j)
-//             } else {
-//                 // (name_j, name_i)
-//                 (name_j, name_i)
-//             };
-            
-//             if critical_pairs_set.insert(pair) {
-//                 let cp_count = critical_pairs_set.len();
-//                 // TODO: usize not string for name
-//                 // TODO: use Rc for key to avoid clone
-//                 critical_pairs.insert((
-//                     // cp_count, 
-//                     cp_count,
-//                     CpKey(*src_i, Rc::clone(rule_i)),
-//                     CpKey(*src_j, Rc::clone(rule_j))
-//                 ));
-//             }
-//         };
-
-//         for i in 0..local_apps.len() {
-//             for j in (i + 1)..local_apps.len() {
-//                 process_pair(local_apps[i], local_apps[j]);
-//             }
-//         }
-
-//         for local in &local_apps {
-//             for inherited in &inherited_apps {
-//                 process_pair(local, inherited);
-//             }
-//         }
-//     }
-// });
-
-        // measure_block!("find cp candidate", {
-        //     for (eclass, apps) in sub_applicable.iter() {
-        //         // let apps_vec = apps.iter().collect::<Vec<_>>();
-        //         let apps = apps.iter().collect::<Vec<_>>();
-        //         for i in 0..apps.len() {
-        //             for j in (i + 1)..apps.len() {
-        //         // for i in 0..apps_vec.len() {
-        //         //     for j in (i + 1)..apps_vec.len() {
-        //                 let CpKey(src_i, rule_i) = &apps[i];
-        //                 let CpKey(src_j, rule_j) = &apps[j];
-        //                 // let CpKey(src_i, rule_i) = apps_vec[i];
-        //                 // let CpKey(src_j, rule_j) = apps_vec[j];
-        //                 if src_i != eclass && src_j != eclass {
-        //                     continue;
-        //                 }
-        //                 let name_i = rule_i.rewrite.name();
-        //                 let name_j = rule_j.rewrite.name();
-        //                 // sorted tuple in critical pairs
-        //                 let pair = if name_i < name_j {
-        //                     (name_i.to_string(), name_j.to_string())
-        //                 } else {
-        //                     (name_j.to_string(), name_i.to_string())
-        //                 };
-        //                 if critical_pairs_set.insert(pair) {
-        //                     let cp_count = critical_pairs_set.len();
-        //                     critical_pairs.insert((cp_count.to_string(), CpKey(*src_i, rule_i.clone()), CpKey(*src_j, rule_j.clone())));
-        //                     // println!(
-        //                     //     "Overlap found in eclass {}: rules '{}' and '{}' (from eclasses {} and {})",
-        //                     //     eclass, rule_i, rule_j, src_i, src_j
-        //                     // );
-        //                 }
-        //                 // println!(
-        //                 //     "Overlap found in eclass {}: rules '{}' and '{}' (from eclasses {} and {})",
-        //                 //     eclass, rule_i, rule_j, src_i, src_j
-        //                 // );
-        //             }
-        //         }
-        //     }
-        // }); // measure
-
-
-        // println!("VVV: Compute CP");
-        // io::stdout().flush().unwrap();
         info!(loggers.logger, "    Compute CP");
 
             // TODO: only critical pair overlap at correct positions not all
@@ -1143,11 +892,6 @@ measure_block!("find cp candidate", {
                     }
 
 
-                    // if ! conds.is_empty() {
-                    //     // for testing
-                    //     continue;
-                    // }
-
                     info!(loggers.cp_rules, 
                         // "Adding CP rule: {}: {} -> {} with conditions {:?}\n  (original1: {} -> {}, original2: {} -> {})\n  using CP subst {:?}",
                         "Adding CP rule: {}: {} -> {} with conditions {:?}\n  (original1: {} -> {} with {:?}, original2: {} -> {} with {:?})\n  using Rename subst {:?}\n  using Unifier subst {:?}",
@@ -1182,12 +926,10 @@ measure_block!("find cp candidate", {
 
                         let cond_applier = 
                             ConditionalApplier {
-                                // condition: all_conditions(conds.iter().map(|c| c.as_condition()).collect()),
                                 condition: all_conditions_extended(conds.clone()),
                                 applier: rhs_pattern.clone(),
                             };
 
-                        // cp_rules.push(rule_of_cp_cond(cp_name_lr.as_str(), l, r, condsstr.clone(), conds.clone()));
                         cp_rules.push(ConditionRewrite::new_arc(
                             egg::Rewrite::new(
                                 cp_name_lr.as_str(),
@@ -1199,22 +941,12 @@ measure_block!("find cp candidate", {
                             ).unwrap(),
                             conds.iter().cloned().collect(),
                         ));
-                        // cp_rules.push(rule_of_cp(cp_name_lr.as_str(), l, r));
                     }
                     if var_l.iter().all(|v| var_r.contains(v)) && !is_var(r) {
                         // if var_l is subset of var_r
                         info!(loggers.cp_rules, "Added inverse rule {}: {} -> {}", cp_name_rl, r, l);
-                        // println!(
-                        //     " Adding CP rule: {}: {} -> {} with conditions {:?}",
-                        //     cp_name_rl,
-                        //     r,
-                        //     l,
-                        //     condsstr
-                        // );
-                        // cp_rules.push(rule_of_cp_cond(cp_name_rl.as_str(), r, l, condsstr, conds));
                         let cond_applier = 
                             ConditionalApplier {
-                                // condition: all_conditions(conds.iter().map(|c| c.as_condition()).collect()),
                                 condition: all_conditions_extended(conds.clone()),
                                 applier: lhs_pattern.clone(),
                             };
@@ -1229,235 +961,11 @@ measure_block!("find cp candidate", {
                             ).unwrap(),
                             conds
                         ));
-                        // cp_rules.push(rule_of_cp(cp_name_rl.as_str(), r, l));
                     }
                 }
             }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-            //         // TODO: not any two if can be unified (same_eq)
-            //         //   Critical pair between '((* ?a 1) -> ?a)' and '((* ?a ?b) -> (* ?b ?a))': (* 1 ?a_0) = ?a_0
-            //         //   Critical pair between '((* ?a 1) -> ?a)' and '((* ?a ?b) -> (* ?b ?a))': ?a = (* 1 ?a)
-            //         // println!(
-            //         //     "  Critical pair between '({} -> {})' and '({} -> {})': {} = {}",
-            //         //     r1.0,r1.1,
-            //         //     r2.0,r2.1,
-            //         //     l,
-            //         //     r
-            //         // );
-            //         // add critical pair as rewrite rule
-            //         // consider both direction but only if no new variable are introduced
-
-            //         let r_subst = right_subst.iter().cloned().chain(
-            //             unifier.iter().filter_map(|(k,v)| {
-            //                 if let Term::Var(var) = v {
-            //                     // if k is rhs of r_subst_org use lhs instead
-            //                     // let k_prime = r_subst_org.iter().find_map(|(k2,v2)| {
-            //                     //     if v2 == k {
-            //                     //         Some(k2)
-            //                     //     } else {
-            //                     //         None
-            //                     //     }
-            //                     // }).unwrap_or(k);
-            //                     let k_prime = k;
-            //                     Some((k_prime.clone(), var.to_string()))
-            //                 } else {
-            //                     None
-            //                 }
-            //             })
-            //             // r_subst_org.iter()
-            //         ).collect::<Vec<_>>();
-
-
-            //         let var_l = vars(l);
-            //         let var_r = vars(r);
-            //         fn is_var(t: &Term) -> bool {
-            //             matches!(t, Term::Var(_))
-            //         }
-            //         let cp_name_lr = format!("cp_{}_lr", rule_name_counter);
-            //         let cp_name_rl = format!("cp_{}_rl", rule_name_counter);
-            //         rule_name_counter += 1;
-            //         // let condsstr = cond1.iter().chain(cond2.iter()).cloned().collect::<Vec<_>>();
-            //         // if !condsstr.is_empty() {
-            //         //     panic!("Conditional critical pairs not supported yet, got conditions: {:?}", condsstr);
-            //         // }
-            //         // let conds = if condsstr.is_empty() { None } else { Some(Arc::new(CombinedCondition(conds1, conds2))) };
-
-            //         // let conds = 
-            //         //     if let Some(c1) = conds1 {
-            //         //         if let Some(c2) = conds2 {
-            //         //             Some(Arc::new(CombinedCondition(c1.clone(), c2.clone())) as Arc<dyn Condition<Math, ConstantFold>>)
-            //         //         } else {
-            //         //             Some(c1.clone())
-            //         //         }
-            //         //     } else {
-            //         //         conds2.clone()
-            //         //     };
-
-            //             // TODO: print debug rules
-
-            //         let r_subst_map: HashMap<Var, Var> = r_subst.iter().map(|(k,v)| {
-            //             let var1 = k.parse().unwrap();
-            //             let var2 = v.parse().unwrap();
-            //             (var1, var2)
-            //         }).collect();
-            //         let r2_conds = rule2.conditions.iter().map(|c| {
-            //             // let mut cnew = (*c).clone();
-            //             // apply substitution from critical pair unification
-            //             // cnew.apply_subst(&r_subst_map);
-            //             // cnew
-            //             c.with_subst(&r_subst_map)
-            //         }).collect::<Vec<_>>();
-            //         let r1_conds = rule1.conditions.iter().map(|c| { c.with_subst(&r_subst_map) }).collect::<Vec<_>>();
-            //         let conds = 
-            //             // rule1.conditions.iter()
-            //             r1_conds.iter()
-            //             // .chain(rule2.conditions.iter())
-            //             .chain(r2_conds.iter())
-            //             .map(|c| {
-            //                 // let mut cnew = (*c).clone();
-            //                 // apply substitution from critical pair unification
-            //                 // let subst_cp = unify_terms(l, r).unwrap();
-            //                 // cnew.apply_subst(&subst_cp);
-            //                 c.clone()
-            //             })
-            //             .collect::<Vec<_>>();
-            //         let condsstr = conds.iter().map(|c| c.stringify()).collect::<Vec<_>>();
-            //         let condsstr = "conds: ".to_string() + &format!("{:?}", condsstr);
-
-            //         let lhs_pattern = Pattern::from_str(&l.to_string()).unwrap();
-            //         let rhs_pattern = Pattern::from_str(&r.to_string()).unwrap();
-
-
-            //         let condvars = conds.iter().flat_map(|c| 
-            //             c.vars().iter().map(|v| v.to_string()).collect::<Vec<_>>()
-            //         ).collect::<HashSet<_>>();
-
-            //         // is there a condition variable that does not occur in the rule?
-            //         if condvars.iter().any(|v| !var_l.contains(v) && !var_r.contains(v)) {
-            //             println!(
-            //                 "Skipping CP rule {}: {} -> {} because condition variable(s) {:?} do not occur in the rule ({})",
-            //                 cp_name_lr,
-            //                 l,
-            //                 r,
-            //                 condvars.iter().filter(|v| !var_l.contains(v) && !var_r.contains(v)).collect::<Vec<_>>(),
-            //                 condsstr
-            //             );
-            //             println!(
-            //                 "  R1: {} -> {} (conds: {:?})\n  R2: {} -> {} (conds: {:?})\n  Rename subst: {:?}\n  Unification: {:?}",
-            //                 rule1.rewrite.lhs,
-            //                 rule1.rewrite.rhs,
-            //                 rule1.conditions.iter().map(|c| c.stringify()).collect::<Vec<_>>(),
-            //                 rule2.rewrite.lhs,
-            //                 rule2.rewrite.rhs,
-            //                 rule2.conditions.iter().map(|c| c.stringify()).collect::<Vec<_>>(),
-            //                 right_subst,
-            //                 unifier.iter().map(|(k,v)| (k.to_string(), v.to_string())).collect::<Vec<_>>()
-            //             );
-            //             // panic!();
-            //             continue;
-            //         }
-
-
-            //         // if ! conds.is_empty() {
-            //         //     // for testing
-            //         //     continue;
-            //         // }
-
-            //         println!(
-            //             "Adding CP rule: {}: {} -> {} with conditions {:?}\n  (original1: {} -> {}, original2: {} -> {})\n  using CP subst {:?}",
-            //             cp_name_lr,
-            //             l,
-            //             r,
-            //             condsstr,
-            //             rule1.rewrite.lhs,
-            //             rule1.rewrite.rhs,
-            //             rule2.rewrite.lhs,
-            //             rule2.rewrite.rhs,
-            //             r_subst    
-            //         );
-
-            //         if var_r.iter().all(|v| var_l.contains(v)) && !is_var(l) {
-            //             // if var_r is subset of var_l 
-            //             // println!(
-            //             //     "Adding CP rule: {}: {} -> {} with conditions {:?}\n  (original1: {:?} -> {:?}, original2: {:?} -> {:?})",
-            //             //     cp_name_lr,
-            //             //     l,
-            //             //     r,
-            //             //     condsstr,
-            //             //     rule1.rewrite.lhs,
-            //             //     rule1.rewrite.rhs,
-            //             //     rule2.rewrite.lhs,
-            //             //     rule2.rewrite.rhs
-            //             // );
-            //             println!("Added rule {}: {} -> {}", cp_name_lr, l, r);
-
-            //             let cond_applier = 
-            //                 ConditionalApplier {
-            //                     // condition: all_conditions(conds.iter().map(|c| c.as_condition()).collect()),
-            //                     condition: all_conditions_extended(conds.clone()),
-            //                     applier: rhs_pattern.clone(),
-            //                 };
-
-            //             // cp_rules.push(rule_of_cp_cond(cp_name_lr.as_str(), l, r, condsstr.clone(), conds.clone()));
-            //             cp_rules.push(ConditionRewrite::new_arc(
-            //                 egg::Rewrite::new(
-            //                     cp_name_lr.as_str(),
-            //                     lhs_pattern.clone().to_string(),
-            //                     rhs_pattern.clone().to_string(),
-            //                     lhs_pattern.clone(),
-            //                     // rhs_pattern.clone(),
-            //                     cond_applier,
-            //                 ).unwrap(),
-            //                 conds.iter().cloned().collect(),
-            //             ));
-            //             // cp_rules.push(rule_of_cp(cp_name_lr.as_str(), l, r));
-            //         }
-            //         if var_l.iter().all(|v| var_r.contains(v)) && !is_var(r) {
-            //             // if var_l is subset of var_r
-            //             println!("Added inverse rule {}: {} -> {}", cp_name_rl, r, l);
-            //             // println!(
-            //             //     " Adding CP rule: {}: {} -> {} with conditions {:?}",
-            //             //     cp_name_rl,
-            //             //     r,
-            //             //     l,
-            //             //     condsstr
-            //             // );
-            //             // cp_rules.push(rule_of_cp_cond(cp_name_rl.as_str(), r, l, condsstr, conds));
-            //             let cond_applier = 
-            //                 ConditionalApplier {
-            //                     // condition: all_conditions(conds.iter().map(|c| c.as_condition()).collect()),
-            //                     condition: all_conditions_extended(conds.clone()),
-            //                     applier: lhs_pattern.clone(),
-            //                 };
-            //             cp_rules.push(ConditionRewrite::new_arc(
-            //                 egg::Rewrite::new(
-            //                     cp_name_rl.as_str(),
-            //                     rhs_pattern.to_string(),
-            //                     lhs_pattern.to_string(),
-            //                     rhs_pattern,
-            //                     // lhs_pattern,
-            //                     cond_applier,
-            //                 ).unwrap(),
-            //                 conds
-            //             ));
-            //             // cp_rules.push(rule_of_cp(cp_name_rl.as_str(), r, l));
-            //         }
-            //     }
-            // }
         }); // measure
 
 
@@ -1525,28 +1033,10 @@ measure_block!("find cp candidate", {
             .collect::<Vec<_>>()
             .join("\n");
 
-        // let file = std::fs::OpenOptions::new()
-        //     .create(true)
-        //     .append(true)
-        //     .open("tmp/cp_rules.txt")
-        //     .unwrap();
-        // let mut writer = BufWriter::new(file);
-        // writeln!(writer, "ID {}:", expression.index).unwrap();
-        // writeln!(writer, "Expression: {}", start_expression).unwrap();
-        // let best_expr_str = best_expr.as_ref().map(|s| s.to_string()).unwrap_or_default();
-        // writeln!(writer, "Best expression: {}", best_expr_str).unwrap();
-        // writeln!(writer, "Critical Pair Rules:\n{}", picked_cp_rules).unwrap();
-
         info!(loggers.used_cp_rules, "ID {}:", expression.index);
         info!(loggers.used_cp_rules, "Expression: {}", start_expression);
         info!(loggers.used_cp_rules, "Best expression: {}", best_expr.clone().unwrap_or_default());
         info!(loggers.used_cp_rules, "Critical Pair Rules:\n{}", picked_cp_rules);
-
-
-        // // writeln!(writer, "ID {}:", index).unwrap();
-        // // writeln!(writer, "Expression: {}", start_expression).unwrap();
-        // // writeln!(writer, "Best expression: {}", best_expr.clone().unwrap_or_default()).unwrap();
-        // // writeln!(writer, "Critical Pair Rules:\n{}", picked_cp_rules).unwrap();
     }
 
     // manually serialize result structure to json and write to file
